@@ -2,8 +2,16 @@
 # Install: pip install -r requirements.txt
 # Then:    playwright install chromium
 
+# Secrets loading from .env file
+python-dotenv
+
 # Browser automation (ECW navigation)
 playwright
+
+# Camoufox stealth browser (bypasses bot detection / Cloudflare)
+# Falls back to standard Playwright if not installed
+# Install separately: pip install camoufox
+camoufox
 
 # HTTP client (PDF download + Vertex AI API calls)
 httpx

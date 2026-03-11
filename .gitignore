@@ -147,6 +147,7 @@ ENV/
 env.bak/
 venv.bak/
 myenv/
+rishav_files
 
 # Spyder project settings
 .spyderproject

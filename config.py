@@ -1,81 +1,72 @@
 """
 Configuration File
 ==================
-Fill in your credentials and ECW selectors here.
+Credentials are loaded from the .env file (never hardcoded here).
 
-HOW TO FIND SELECTORS:
-1. Open ECW in Chrome
-2. Right-click on any element → "Inspect"
-3. In DevTools, right-click the highlighted HTML → Copy → Copy selector
-4. Paste it below
+Setup:
+  1. Ensure .env exists in this folder (copy from .env.example)
+  2. Fill in your real values in .env
+  3. .env is in .gitignore — never committed
+
+Non-sensitive settings (selectors, date format, category mapping)
+remain here since they are not secrets.
 """
 
-# ─────────────────────────────────────────────
-# GOOGLE VERTEX AI  (HIPAA — covered under BAA)
-# ─────────────────────────────────────────────
-# Sign BAA first: console.cloud.google.com → IAM → Data Protection
-GOOGLE_CLOUD_PROJECT_ID  = "your-gcp-project-id"       # ← Replace with your GCP project ID
-GOOGLE_CLOUD_LOCATION    = "us-central1"                # Region (keep us-central1 for best Gemini support)
-GOOGLE_APPLICATION_CREDENTIALS = "config/google_service_account.json"  # ← Path to your service account key
+import os
+from dotenv import load_dotenv
 
-# ─────────────────────────────────────────────
+# Load .env from project root — MUST be called before reading env vars
+_env_path = os.path.join(os.path.dirname(__file__), ".env")
+load_dotenv(dotenv_path=_env_path)
+
+
+def _require(key: str) -> str:
+    """Read a required env var — raise clearly if missing."""
+    val = os.environ.get(key)
+    if not val:
+        raise EnvironmentError(
+            f"\nMissing required secret: {key}\n"
+            f"Add it to your .env file:\n"
+            f"  {key}=your_value_here\n"
+            f"Then restart."
+        )
+    return val
+
+
+# ─────────────────────────────────────────────────────────────────
+# SECRETS  (loaded from .env — never hardcoded)
+# ─────────────────────────────────────────────────────────────────
+ECW_URL      = _require("ECW_URL")
+ECW_USERNAME = _require("ECW_USERNAME")
+ECW_PASSWORD = _require("ECW_PASSWORD")
+
+GOOGLE_CLOUD_PROJECT_ID      = os.environ.get("GOOGLE_CLOUD_PROJECT_ID", "")
+GOOGLE_CLOUD_LOCATION        = os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1")
+GOOGLE_APPLICATION_CREDENTIALS = os.environ.get(
+    "GOOGLE_APPLICATION_CREDENTIALS", "config/google_service_account.json"
+)
+
+# Set the Google creds env var that google-auth looks for
+if GOOGLE_APPLICATION_CREDENTIALS:
+    os.environ.setdefault(
+        "GOOGLE_APPLICATION_CREDENTIALS", GOOGLE_APPLICATION_CREDENTIALS
+    )
+
+# ─────────────────────────────────────────────────────────────────
 # LOCAL MISTRAL OCR  (runs 100% on your machine)
-# ─────────────────────────────────────────────
-# Install: https://ollama.com/download
-# Then run: ollama pull mistral-small3.1
-OLLAMA_HOST        = "http://localhost:11434"
-MISTRAL_OCR_MODEL  = "mistral-small3.1"
-ECW_URL = "https://YOUR-ECW-INSTANCE-URL-HERE.com"   # ← Replace with your ECW URL
-ECW_USERNAME = "your_username"                         # ← Replace with your username
-ECW_PASSWORD = "your_password"                         # ← Replace with your password
-ECW_DATE_FORMAT = "%m/%d/%Y"                           # Date format ECW expects
+# ─────────────────────────────────────────────────────────────────
+OLLAMA_HOST       = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+MISTRAL_OCR_MODEL = os.environ.get("MISTRAL_OCR_MODEL", "mistral-small3.1")
 
+# ─────────────────────────────────────────────────────────────────
+# NON-SECRET SETTINGS
+# ─────────────────────────────────────────────────────────────────
+ECW_DATE_FORMAT = "%m/%d/%Y"   # Date format ECW expects
 
-# ─────────────────────────────────────────────
-# ECW SELECTORS  (update after inspecting ECW)
-# ─────────────────────────────────────────────
-
-# The "D" icon on the top right navigation bar
-SELECTOR_ICON_D = "#iconD"  # ← Inspect and replace
-
-# "Fax Inbox Web Mode" menu item in the dropdown
-SELECTOR_FAX_INBOX_MENU_ITEM = "text=Fax Inbox Web Mode"
-
-# Date picker input field in fax inbox
-SELECTOR_DATE_INPUT = "input[name='faxDate']"  # ← Inspect and replace
-
-# Each fax row in the inbox list
-SELECTOR_FAX_ROW = "tr.fax-row"  # ← Inspect and replace
-
-# The PDF preview panel / iframe
-SELECTOR_FAX_PREVIEW = "iframe#faxPreview"  # ← Inspect and replace
-
-# ── Send To Staff Dialog ──────────────────────────────────────────────────────
-
-# The person/send icon that appears on the right side of each fax row
-# (the blue person icon visible in the screenshot)
-SELECTOR_SEND_TO_STAFF_ICON = "tr.fax-row.selected .send-staff-icon"  # ← Inspect and replace
-
-# The 'Send To Staff' dialog container (appears after clicking the icon)
-SELECTOR_STAFF_DIALOG = ".send-to-staff-dialog"  # ← Inspect and replace
-
-# The Staff search input box inside the dialog
-SELECTOR_STAFF_SEARCH_INPUT = ".send-to-staff-dialog input[type='text']"  # ← Inspect and replace
-
-# Autocomplete dropdown items that appear after typing in the search box
-SELECTOR_STAFF_DROPDOWN_ITEM = ".autocomplete-dropdown li"  # ← Inspect and replace
-
-# OK button inside the dialog
-SELECTOR_STAFF_DIALOG_OK = ".send-to-staff-dialog button:has-text('Ok')"  # ← Inspect and replace
-
-# Cancel button inside the dialog
-SELECTOR_STAFF_DIALOG_CANCEL = ".send-to-staff-dialog button:has-text('Cancel')"  # ← Inspect and replace
-
-
-# ─────────────────────────────────────────────
-# CATEGORY → FOLDER MAPPING
-# Map AI category names to exact folder names in ECW's right-click menu
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────
+# CATEGORY -> STAFF GROUP MAPPING
+# Map AI category names to exact group names in ECW's Send To Staff dialog
+# ─────────────────────────────────────────────────────────────────
 CATEGORY_TO_FOLDER = {
     "BIOLOGICS":        "Group Biologics",
     "PRIOR_AUTH":       "Group PA",
@@ -83,5 +74,5 @@ CATEGORY_TO_FOLDER = {
     "MEDICAL_RECORDS":  "Group Medical Records",
     "MEDICATION_AND_IT":"Group MA",
     "RADIOLOGY":        "Group Radiology",
-    "UNKNOWN":          None  # Will trigger manual review
+    "UNKNOWN":          None    # Triggers manual review
 }

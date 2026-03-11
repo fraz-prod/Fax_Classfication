@@ -1,168 +1,230 @@
 """
-ECW Browser Automation Bot
-Handles all browser interactions with eClinicalWorks
+ecw_bot.py
+==========
+ECW Browser Automation — High-level orchestrator.
+
+Uses the Page Object Model (pages/ package):
+  - BrowserManager  : launches Camoufox stealth browser (or Playwright fallback)
+  - LoginPage       : handles two-step ECW login + verification checkbox
+  - BasePage        : used by fax-inbox operations for robust click/wait helpers
+
+Flow:
+  launch() -> login() -> open_fax_inbox() -> select_date()
+  -> get_fax_list() -> [for each fax] download_fax_pdf() -> send_fax_to_staff_group()
+  -> close()
 """
 
 import asyncio
-import os
 import logging
+import os
+import time
 from datetime import datetime
 from urllib.parse import urlparse
+
 import httpx
-from playwright.async_api import async_playwright, Page, Browser
+
+from pages.browser_manager import BrowserManager
+from pages.login_page import LoginPage
+from pages.base_page import BasePage
+from constants import NavigationPageSelectors, StaffDialogSelectors, Timeouts
 import config
 
 log = logging.getLogger(__name__)
 
 
 class ECWBot:
+    """
+    High-level ECW browser automation bot.
+
+    Coordinates BrowserManager + LoginPage + BasePage to drive
+    ECW's fax inbox: log in, iterate faxes, download PDFs, and
+    route them to staff groups.
+    """
+
     def __init__(self):
-        self.playwright = None
-        self.browser: Browser = None
-        self.page: Page = None
+        self.browser_manager = BrowserManager(
+            headless=False,       # Set True once fully tested
+            wait_timeout=Timeouts.DEFAULT_WAIT
+        )
+        self.page = None
+        self.base = None          # BasePage helper for fax-inbox actions
         self.screenshot_dir = "screenshots"
         os.makedirs(self.screenshot_dir, exist_ok=True)
         os.makedirs("logs", exist_ok=True)
 
+    # ── Lifecycle ──────────────────────────────────────────────────────────
+
     async def launch(self):
-        """Launch Chromium browser"""
-        self.playwright = await async_playwright().start()
-        self.browser = await self.playwright.chromium.launch(
-            headless=False,  # Set True once tested and working
-            slow_mo=500      # Slow down actions so you can watch it work
+        """Start the browser (sync call wrapped for async main)."""
+        log.info("Launching browser via BrowserManager...")
+        loop = asyncio.get_event_loop()
+        self.page = await loop.run_in_executor(None, self.browser_manager.start_driver)
+        self.base = BasePage(
+            self.page,
+            wait_timeout=Timeouts.DEFAULT_WAIT,
+            browser_type="camoufox"
         )
-        self.page = await self.browser.new_page()
-        self.page.set_default_timeout(30000)  # 30 second timeout
         log.info("Browser launched.")
 
     async def login(self):
-        """Navigate to ECW and log in"""
-        await self.page.goto(config.ECW_URL)
-        await self.page.wait_for_load_state("networkidle")
+        """Navigate to ECW and perform two-step login."""
+        log.info("Navigating to ECW and logging in...")
+        loop = asyncio.get_event_loop()
 
-        # Fill in username and password
-        # NOTE: Update the selectors below to match ECW's actual login fields
-        await self.page.fill('input[name="username"]', config.ECW_USERNAME)
-        await self.page.fill('input[name="password"]', config.ECW_PASSWORD)
-        await self.page.click('button[type="submit"]')
+        # Navigate to ECW URL
+        await loop.run_in_executor(
+            None,
+            self.browser_manager.navigate_and_wait_for_login,
+            config.ECW_URL
+        )
 
-        await self.page.wait_for_load_state("networkidle")
+        # Two-step login via LoginPage
+        login_page = LoginPage(
+            self.page,
+            wait_timeout=Timeouts.LOGIN,
+            browser_type="camoufox"
+        )
+        success = await loop.run_in_executor(
+            None,
+            login_page.login,
+            config.ECW_USERNAME,
+            config.ECW_PASSWORD
+        )
+        if not success:
+            raise RuntimeError("ECW login failed — check credentials and selectors.")
+
         log.info("Logged in to ECW.")
 
-    async def open_fax_inbox(self):
-        """Click icon D and select Fax Inbox Web Mode from dropdown"""
-        # NOTE: Update selector to match the actual "D" icon element
-        # Right-click the icon area top right — inspect element in Chrome to get selector
-        await self.page.click(config.SELECTOR_ICON_D)
-        await asyncio.sleep(1)
+    async def close(self):
+        """Close the browser cleanly."""
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self.browser_manager.quit_driver)
+        log.info("Browser closed.")
 
-        # Click "Fax Inbox Web Mode" from dropdown
-        await self.page.click(config.SELECTOR_FAX_INBOX_MENU_ITEM)
-        await self.page.wait_for_load_state("networkidle")
+    # ── Fax Inbox Navigation ───────────────────────────────────────────────
+
+    async def open_fax_inbox(self):
+        """Click the jellybean button and select 'Fax Inbox - Web Mode'."""
+        loop = asyncio.get_event_loop()
+
+        log.info("Waiting 15 seconds for dashboard to fully load before clicking jellybean...")
+        await asyncio.sleep(15)
+
+        log.info("Clicking jellybean button via JavaScript to ensure event listener fires...")
+        await loop.run_in_executor(
+            None,
+            self.page.evaluate,
+            f"document.querySelector('{NavigationPageSelectors.JELLYBEAN_BUTTON}').dispatchEvent(new MouseEvent('click', {{bubbles: true, cancelable: true, view: window}}))"
+        )
+        await asyncio.sleep(2)
+
+        await loop.run_in_executor(
+            None,
+            self.base.click_element,
+            NavigationPageSelectors.FAX_INBOX_ITEM
+        )
+        await asyncio.sleep(2)
         log.info("Fax Inbox Web Mode opened.")
 
     async def select_date(self, date: datetime):
-        """Select date in the fax inbox date picker"""
+        """Fill the date picker with today's date."""
         date_str = date.strftime(config.ECW_DATE_FORMAT)
+        loop = asyncio.get_event_loop()
 
-        # NOTE: Update selector to match ECW's date input field
-        await self.page.fill(config.SELECTOR_DATE_INPUT, date_str)
-        await self.page.keyboard.press("Enter")
-        await self.page.wait_for_load_state("networkidle")
+        await loop.run_in_executor(
+            None,
+            self.base.type_text,
+            NavigationPageSelectors.DATE_INPUT,
+            date_str
+        )
+        await asyncio.sleep(0.5)
+        self.page.keyboard.press("Enter")
         await asyncio.sleep(2)
         log.info(f"Date selected: {date_str}")
 
     async def get_fax_list(self) -> list:
-        """Get all fax rows from the inbox table"""
-        # NOTE: Update selector to match ECW's fax list rows
-        await self.page.wait_for_selector(config.SELECTOR_FAX_ROW)
-        fax_rows = await self.page.query_selector_all(config.SELECTOR_FAX_ROW)
+        """Return all fax row elements from the inbox table."""
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(
+            None,
+            self.base.wait_for_element,
+            NavigationPageSelectors.FAX_ROW,
+            Timeouts.FAX_INBOX,
+            "attached"
+        )
+        fax_rows = self.page.locator(NavigationPageSelectors.FAX_ROW).all()
         log.info(f"Found {len(fax_rows)} fax rows.")
         return fax_rows
 
-    async def open_fax(self, fax_element):
-        """Click on a fax to open its preview"""
-        await fax_element.click()
-        await asyncio.sleep(2)  # Wait for PDF preview to load
-        await self.page.wait_for_load_state("networkidle")
+    # ── PDF Download ───────────────────────────────────────────────────────
 
     async def download_fax_pdf(self, fax_element) -> bytes:
         """
-        Click a fax row to open its PDF preview, then download the PDF
-        bytes directly from the ECW iframe src URL.
+        Click a fax row, wait for the PDF preview iframe to load,
+        extract the iframe src URL, and download the PDF bytes using
+        the browser's session cookies (authenticated, HIPAA-safe).
 
-        Strategy:
-          1. Click the fax row → ECW loads PDF in an iframe
-          2. Wait for the iframe to appear and its src to be populated
-          3. Extract the iframe src URL (ECW serves the PDF via this URL)
-          4. Copy the browser's active cookies (keeps auth session alive)
-          5. Download the PDF bytes using httpx with those cookies
-          6. Return raw bytes to pipeline — PDF never hits disk until
-             pdf_handler.save_pdf() is explicitly called (HIPAA safe)
-
-        Returns:
-            bytes: raw PDF bytes, or b"" on failure
+        Returns raw PDF bytes, or b"" on failure.
         """
         try:
-            # ── Step 1: Click the fax row to load its preview ──────────
-            await fax_element.click()
+            # Step 1: Click the fax row
+            await asyncio.get_event_loop().run_in_executor(
+                None, fax_element.click
+            )
             await asyncio.sleep(2)
-            await self.page.wait_for_load_state("networkidle")
+            self.page.wait_for_load_state("networkidle", timeout=15000)
             log.info("  Fax row clicked — waiting for PDF preview iframe...")
 
-            # ── Step 2: Wait for the PDF iframe to appear ───────────────
+            # Step 2: Wait for iframe to appear
             try:
-                await self.page.wait_for_selector(
-                    config.SELECTOR_FAX_PREVIEW,
-                    timeout=15000
+                self.page.wait_for_selector(
+                    NavigationPageSelectors.FAX_PREVIEW,
+                    timeout=Timeouts.PDF_PREVIEW * 1000
                 )
             except Exception:
                 log.warning(
-                    "  PDF preview iframe not found within 15s. "
-                    f"Check SELECTOR_FAX_PREVIEW in config.py (current: '{config.SELECTOR_FAX_PREVIEW}')"
+                    f"  PDF preview iframe not found. "
+                    f"Check FAX_PREVIEW selector: "
+                    f"'{NavigationPageSelectors.FAX_PREVIEW}'"
                 )
                 return b""
 
-            # ── Step 3: Read the iframe src URL ────────────────────────
-            pdf_url = await self.page.eval_on_selector(
-                config.SELECTOR_FAX_PREVIEW,
+            # Step 3: Read iframe src
+            pdf_url = self.page.eval_on_selector(
+                NavigationPageSelectors.FAX_PREVIEW,
                 "el => el.src || el.getAttribute('src') || ''"
             )
-
             if not pdf_url or pdf_url.strip() in ("", "about:blank"):
-                # Some ECW versions embed the viewer differently —
-                # try reading data-src or the inner iframe
-                pdf_url = await self.page.eval_on_selector(
-                    config.SELECTOR_FAX_PREVIEW,
+                pdf_url = self.page.eval_on_selector(
+                    NavigationPageSelectors.FAX_PREVIEW,
                     "el => el.getAttribute('data-src') || ''"
                 )
 
             if not pdf_url or pdf_url.strip() in ("", "about:blank"):
                 log.error(
-                    "  PDF iframe found but src is empty or 'about:blank'. "
-                    "ECW may load the PDF lazily — try increasing the sleep "
-                    "above or update SELECTOR_FAX_PREVIEW."
+                    "  PDF iframe src is empty. ECW may load PDF lazily — "
+                    "try adding a longer sleep or update FAX_PREVIEW selector."
                 )
                 return b""
 
-            # Make absolute URL if ECW returns a relative path
+            # Step 4: Make absolute URL if needed
             if pdf_url.startswith("/"):
                 parsed = urlparse(config.ECW_URL)
                 pdf_url = f"{parsed.scheme}://{parsed.netloc}{pdf_url}"
 
-            log.info(f"  PDF URL found: {pdf_url[:80]}...")
+            log.info(f"  PDF URL: {pdf_url[:80]}...")
 
-            # ── Step 4: Copy browser cookies for authenticated download ─
-            cookies = await self.page.context.cookies()
+            # Step 5: Copy session cookies
+            cookies = self.page.context.cookies()
             cookie_header = "; ".join(
                 f"{c['name']}={c['value']}" for c in cookies
             )
 
-            # ── Step 5: Download PDF bytes via httpx ───────────────────
+            # Step 6: Download PDF via httpx
             async with httpx.AsyncClient(
                 timeout=60.0,
                 follow_redirects=True,
-                verify=False  # ECW often uses self-signed certs internally
+                verify=False   # ECW often has self-signed SSL certs
             ) as client:
                 response = await client.get(
                     pdf_url,
@@ -177,152 +239,104 @@ class ECWBot:
                 )
 
             if response.status_code != 200:
-                log.error(
-                    f"  PDF download failed: HTTP {response.status_code}. "
-                    "Check that ECW session is still active."
-                )
+                log.error(f"  PDF download failed: HTTP {response.status_code}")
                 return b""
 
             content_type = response.headers.get("content-type", "")
             if "pdf" not in content_type.lower() and len(response.content) < 100:
                 log.warning(
-                    f"  Response doesn't look like a PDF "
-                    f"(Content-Type: {content_type}, size: {len(response.content)} bytes). "
-                    "ECW may have returned an error page."
+                    f"  Response may not be a PDF "
+                    f"(Content-Type: {content_type}, "
+                    f"size: {len(response.content)} bytes)"
                 )
-                return b""
 
-            log.info(f"  ✅ PDF downloaded: {len(response.content):,} bytes")
+            log.info(f"  PDF downloaded: {len(response.content):,} bytes")
             return response.content
 
         except Exception as e:
             log.error(f"  download_fax_pdf error: {e}", exc_info=True)
             return b""
 
-    async def screenshot_fax_preview(self, fax_index: int) -> list:
+    # ── Send to Staff ──────────────────────────────────────────────────────
+
+    async def send_fax_to_staff_group(self, category: str) -> bool:
         """
-        Screenshot the first 2 pages of the PDF preview.
-        Returns list of screenshot file paths.
-        """
-        screenshot_paths = []
-
-        # Screenshot the full preview area (adjust selector to the PDF iframe/viewer)
-        preview_element = await self.page.query_selector(config.SELECTOR_FAX_PREVIEW)
-
-        if preview_element:
-            path = f"{self.screenshot_dir}/fax_{fax_index}_page1.png"
-            await preview_element.screenshot(path=path)
-            screenshot_paths.append(path)
-            log.info(f"  Screenshot saved: {path}")
-
-            # Scroll down to capture page 2 if visible
-            await self.page.evaluate(
-                f"document.querySelector('{config.SELECTOR_FAX_PREVIEW}').scrollTop += 1000"
-            )
-            await asyncio.sleep(1)
-
-            path2 = f"{self.screenshot_dir}/fax_{fax_index}_page2.png"
-            await preview_element.screenshot(path=path2)
-            screenshot_paths.append(path2)
-            log.info(f"  Screenshot saved: {path2}")
-
-        else:
-            # Fallback: screenshot full page
-            log.warning("  Could not find PDF preview element — taking full page screenshot.")
-            path = f"{self.screenshot_dir}/fax_{fax_index}_fullpage.png"
-            await self.page.screenshot(path=path, full_page=True)
-            screenshot_paths.append(path)
-
-        return screenshot_paths
-
-    async def send_fax_to_staff_group(self, category: str):
-        """
-        Clicks the person/send icon on the fax row to open
-        the 'Send To Staff' dialog, types the group name,
-        selects from the auto-complete dropdown, and clicks OK.
+        Click the person/send icon on the fax row, type the group name
+        in the 'Send To Staff' dialog, pick from autocomplete, click OK.
         """
         group_name = config.CATEGORY_TO_FOLDER.get(category)
-
         if not group_name:
-            log.warning(f"  No group mapping found for category: {category}")
+            log.warning(f"  No group mapping for category: {category}")
             return False
 
         try:
-            # ── Step 1: Click the person/send icon on the highlighted fax row ──
-            # This is the small person icon that appears on the right side of the row
-            # NOTE: Inspect the icon in Chrome and update SELECTOR_SEND_TO_STAFF_ICON
-            send_icon = await self.page.query_selector(config.SELECTOR_SEND_TO_STAFF_ICON)
-            if not send_icon:
-                log.error("  Could not find 'Send To Staff' icon on fax row.")
+            # Click send icon
+            send_icon = self.page.locator(StaffDialogSelectors.SEND_ICON)
+            if send_icon.count() == 0:
+                log.error("  'Send To Staff' icon not found on fax row.")
                 return False
-
-            await send_icon.click()
+            send_icon.click()
             await asyncio.sleep(1.5)
 
-            # ── Step 2: Wait for the 'Send To Staff' dialog to appear ──
-            await self.page.wait_for_selector(config.SELECTOR_STAFF_DIALOG, timeout=10000)
+            # Wait for dialog
+            self.page.wait_for_selector(
+                StaffDialogSelectors.DIALOG,
+                timeout=Timeouts.DIALOG * 1000
+            )
             log.info("  'Send To Staff' dialog opened.")
 
-            # ── Step 3: Clear the Staff search box and type the group name ──
-            staff_input = await self.page.query_selector(config.SELECTOR_STAFF_SEARCH_INPUT)
-            if not staff_input:
-                log.error("  Could not find Staff search input field.")
+            # Type group name
+            staff_input = self.page.locator(StaffDialogSelectors.SEARCH_INPUT)
+            if staff_input.count() == 0:
+                log.error("  Staff search input not found.")
                 await self._cancel_dialog()
                 return False
 
-            await staff_input.click()
-            await staff_input.fill("")           # Clear any existing text
-            await staff_input.type(group_name, delay=80)  # Type like a human
-            log.info(f"  Typed group name: '{group_name}'")
-            await asyncio.sleep(1.5)             # Wait for autocomplete dropdown
+            staff_input.click()
+            staff_input.fill("")
+            staff_input.type(group_name, delay=80)
+            log.info(f"  Typed: '{group_name}'")
+            await asyncio.sleep(1.5)
 
-            # ── Step 4: Pick the first matching item from the dropdown ──
-            dropdown_items = await self.page.query_selector_all(config.SELECTOR_STAFF_DROPDOWN_ITEM)
-
+            # Pick from dropdown
+            items = self.page.locator(StaffDialogSelectors.DROPDOWN_ITEM).all()
             matched = False
-            for item in dropdown_items:
-                text = await item.inner_text()
+            for item in items:
+                text = item.inner_text()
                 if group_name.lower() in text.lower():
-                    await item.click()
-                    log.info(f"  Selected from dropdown: '{text.strip()}'")
+                    item.click()
+                    log.info(f"  Selected: '{text.strip()}'")
                     matched = True
                     await asyncio.sleep(0.5)
                     break
 
             if not matched:
-                log.warning(f"  Group '{group_name}' not found in dropdown — cancelling.")
+                log.warning(f"  '{group_name}' not found in dropdown — cancelling.")
                 await self._cancel_dialog()
                 return False
 
-            # ── Step 5: Click OK to confirm ──
-            ok_button = await self.page.query_selector(config.SELECTOR_STAFF_DIALOG_OK)
-            if ok_button:
-                await ok_button.click()
-                log.info(f"  ✅ Fax sent to: {group_name}")
+            # Click OK
+            ok_btn = self.page.locator(StaffDialogSelectors.OK_BUTTON)
+            if ok_btn.count() > 0:
+                ok_btn.click()
+                log.info(f"  Fax sent to: {group_name}")
                 await asyncio.sleep(1.5)
                 return True
             else:
-                log.error("  Could not find OK button in dialog.")
+                log.error("  OK button not found in dialog.")
                 return False
 
         except Exception as e:
-            log.error(f"  Error in send_fax_to_staff_group: {e}")
+            log.error(f"  send_fax_to_staff_group error: {e}")
             await self._cancel_dialog()
             return False
 
     async def _cancel_dialog(self):
-        """Click Cancel if the dialog is open, to avoid getting stuck"""
+        """Click Cancel to dismiss Send To Staff dialog if it's open."""
         try:
-            cancel = await self.page.query_selector(config.SELECTOR_STAFF_DIALOG_CANCEL)
-            if cancel:
-                await cancel.click()
+            cancel = self.page.locator(StaffDialogSelectors.CANCEL_BUTTON)
+            if cancel.count() > 0:
+                cancel.click()
                 await asyncio.sleep(0.5)
         except Exception:
             pass
-
-    async def close(self):
-        """Close browser cleanly"""
-        if self.browser:
-            await self.browser.close()
-        if self.playwright:
-            await self.playwright.stop()
