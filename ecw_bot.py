@@ -110,11 +110,11 @@ class ECWBot:
         log.info("Waiting 15 seconds for dashboard to fully load before clicking jellybean...")
         await asyncio.sleep(15)
 
-        log.info("Clicking jellybean button via JavaScript to ensure event listener fires...")
+        log.info("Clicking yellow 'D' icon in nav bar...")
         await loop.run_in_executor(
             None,
-            self.page.evaluate,
-            f"document.querySelector('{NavigationPageSelectors.JELLYBEAN_BUTTON}').dispatchEvent(new MouseEvent('click', {{bubbles: true, cancelable: true, view: window}}))"
+            self.base.click_element,
+            NavigationPageSelectors.ICON_D
         )
         await asyncio.sleep(2)
 

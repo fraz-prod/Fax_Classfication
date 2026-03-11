@@ -47,8 +47,8 @@ class NavigationPageSelectors:
     # Dashboard hamburger menu — confirms login succeeded  [rishav]
     HAMBURGER_MENU  = "#hamburgerMenu"
 
-    # Floating jellybean button that opens the fax/inbox dropdown
-    JELLYBEAN_BUTTON = ".floating-button-container .floating-button svg"
+    # Top-right yellow "D" icon in the navigation bar
+    ICON_D = "text=\"D\""
 
     # "Fax Inbox - Web Mode" menu item in the dropdown
     FAX_INBOX_ITEM  = "text=Fax Inbox - Web Mode"
