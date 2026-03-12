@@ -103,28 +103,60 @@ class ECWBot:
 
     # ── Fax Inbox Navigation ───────────────────────────────────────────────
 
+    def _open_fax_inbox_sync(self):
+        """
+        Sync Playwright implementation — runs entirely in one thread.
+
+        Greenlets (used by Playwright sync API) must not cross OS thread boundaries.
+        By putting all Playwright calls here and dispatching via a single
+        run_in_executor(), we guarantee they all run in the same thread.
+
+        Steps:
+          1. Wait for 'Building your user experience' overlay to vanish
+          2. Click  'D' jellybean  (a#jellybean-panelLink29)
+          3. Hover  'Fax Inbox - Web Mode' (a#jellybean-panelLink302) — opens submenu
+          4. Click  submenu item  (a#jellybean-panelLink332)
+        """
+        import time
+
+        log.info("Waiting for 'Building your user experience' overlay to disappear...")
+        self.page.wait_for_selector("div#load", state="hidden", timeout=60000)
+        log.info("Dashboard overlay gone.")
+
+        # ── Step 1: Hover 'D' jellybean to open the panel ─────────────────
+        log.info("Step 1: Hovering 'D' jellybean button to open panel...")
+        self.page.wait_for_selector(NavigationPageSelectors.JELLYBEAN_D,
+                                    state="visible", timeout=20000)
+        time.sleep(0.5)
+        self.page.hover(NavigationPageSelectors.JELLYBEAN_D)
+        log.info("'D' hovered.")
+        time.sleep(0.5)  # tiny pause so AngularJS registers the open state
+
+        # ── Step 2: JS click 'Fax Inbox - Web Mode' ───────────────────────
+        # These are ng-click elements hidden by CSS. dispatch_event/evaluate
+        # fires the handler directly without requiring CSS visibility.
+        log.info("Step 2: JS-clicking 'Fax Inbox - Web Mode' to open submenu...")
+        self.page.evaluate(
+            "document.querySelector('a#jellybean-panelLink302').click()"
+        )
+        log.info("panelLink302 clicked via JS. Waiting 1s for submenu...")
+        time.sleep(1)
+
+        # ── Step 3: JS click 'Fax Inbox - Web Mode Partial Faxes' ─────────
+        log.info("Step 3: JS-clicking 'Fax Inbox - Web Mode Partial Faxes'...")
+        self.page.evaluate(
+            "document.querySelector('a#jellybean-panelLink332').click()"
+        )
+        log.info("panelLink332 clicked via JS.")
+
+        log.info("Fax Inbox clicked. Waiting 5s for page to load...")
+        time.sleep(5)
+        log.info("✅ Fax Inbox - Web Mode opened successfully!")
+
     async def open_fax_inbox(self):
-        """Click the jellybean button and select 'Fax Inbox - Web Mode'."""
+        """Dispatch the sync Playwright navigation in one dedicated thread."""
         loop = asyncio.get_event_loop()
-
-        log.info("Waiting 15 seconds for dashboard to fully load before clicking jellybean...")
-        await asyncio.sleep(15)
-
-        log.info("Clicking yellow 'D' icon in nav bar...")
-        await loop.run_in_executor(
-            None,
-            self.base.click_element,
-            NavigationPageSelectors.ICON_D
-        )
-        await asyncio.sleep(2)
-
-        await loop.run_in_executor(
-            None,
-            self.base.click_element,
-            NavigationPageSelectors.FAX_INBOX_ITEM
-        )
-        await asyncio.sleep(2)
-        log.info("Fax Inbox Web Mode opened.")
+        await loop.run_in_executor(None, self._open_fax_inbox_sync)
 
     async def select_date(self, date: datetime):
         """Fill the date picker with today's date."""

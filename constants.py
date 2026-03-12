@@ -47,11 +47,14 @@ class NavigationPageSelectors:
     # Dashboard hamburger menu — confirms login succeeded  [rishav]
     HAMBURGER_MENU  = "#hamburgerMenu"
 
-    # Top-right yellow "D" icon in the navigation bar
-    ICON_D = "text=\"D\""
+    # Step 1: Yellow "D" jellybean button in the top navigation bar [confirmed live]
+    JELLYBEAN_D     = "a#jellybean-panelLink29"
 
-    # "Fax Inbox - Web Mode" menu item in the dropdown
-    FAX_INBOX_ITEM  = "text=Fax Inbox - Web Mode"
+    # Step 2: "Fax Inbox - Web Mode" submenu item [confirmed live]
+    FAX_INBOX_WEBMODE = "a#jellybean-panelLink302"
+
+    # Step 3: Final "Fax Inbox" link inside Web Mode [confirmed live]
+    FAX_INBOX_FINAL   = "a#jellybean-panelLink332"
 
     # Date picker input in the fax inbox                    <- INSPECT
     DATE_INPUT      = "input[name='faxDate']"

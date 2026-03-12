@@ -242,10 +242,10 @@ class LoginPage(BasePage):
     def verify_login_success(self) -> bool:
         try:
             log.info("Verifying login success...")
-            # Use the broader container to verify dashboard loaded, as the SVG might render lazily
-            verification_selector = "div.floating-button-container"
+            # Wait for the confirmed D jellybean nav button — proves dashboard loaded
+            verification_selector = "a#jellybean-panelLink29"
             if self.wait_for_element(verification_selector, timeout=0, state="attached"):
-                log.info("Login verified: Dashboard loaded.")
+                log.info("Login verified: Dashboard loaded (jellybean D button found).")
                 return True
             return False
         except Exception as e:
