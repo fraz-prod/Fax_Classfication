@@ -1,6 +1,6 @@
-# 🤖 Fax Classification Agent
+# 🤖 ECW Fax Downloader
 
-An RPA agent that logs into ECW, retrieves faxes from the inbox, OCRs each PDF locally using Mistral via Ollama, classifies it with Google Vertex AI Gemini, and routes it to the correct staff group — all automatically.
+An RPA agent that automatically logs into ECW, retrieves faxes from the inbox, and downloads each PDF locally to your machine.
 
 ---
 
@@ -35,30 +35,13 @@ An RPA agent that logs into ECW, retrieves faxes from the inbox, OCRs each PDF l
 │  PDF Download (ecw_bot.py → pdf_handler.py)                         │
 │  - Click fax row to open preview iframe                             │
 │  - Extract PDF bytes from iframe src URL                            │
-│  - Save to hipaa_local/ directory                                   │
+│  - Save to hipaa_local/raw_pdfs/ directory                          │
 └───────────┬─────────────────────────────────────────────────────────┘
             │
             ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  FaxClassificationPipeline (pipeline.py)                            │
-│                                                                     │
-│  OCR — ocr_engine.py                                                │
-│  - Split PDF into pages (pdf_handler.py)                            │
-│  - Send each page image to Mistral via Ollama (local, on-machine)   │
-│  - Extract text per page                                            │
-│                                                                     │
-│  Classify — gemini_classifier.py                                    │
-│  - Send plain OCR text to Vertex AI Gemini 1.5 Pro                  │
-│  - Returns: category, confidence, reason                            │
-│  - Categories: LAB, REFERRAL, INSURANCE, PRESCRIPTION, OTHER        │
-└───────────┬─────────────────────────────────────────────────────────┘
-            │
-            ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  Routing & Logging                                                  │
-│  - HIGH/MEDIUM confidence → auto-send to staff group via ECW dialog │
-│  - LOW confidence → flagged for manual review                       │
-│  - All results saved to logs/fax_classification_log.xlsx            │
+│  Logging                                                            │
+│  - Record SUCCESS/FAILED status in logs/fax_download_log.xlsx       │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -71,18 +54,13 @@ RPA/
 │
 ├── main.py                  ← Entry point — runs the full agent
 ├── ecw_bot.py               ← ECW browser automation (login + navigation + PDF)
-├── pipeline.py              ← Full PDF → OCR → Classify pipeline
-├── gemini_classifier.py     ← Vertex AI Gemini classifier (HIPAA-covered)
-├── ocr_engine.py            ← Local Mistral OCR via Ollama (all on-machine)
-├── pdf_handler.py           ← Local PDF save / split / archive
+├── pdf_handler.py           ← Local PDF save handler
 ├── logger.py                ← Excel audit log writer
-├── classifier.py            ← ⚠️ LEGACY — not used
 ├── config.py                ← ⚙️ YOUR SETTINGS GO HERE (credentials, URLs)
 ├── constants.py             ← All ECW UI selectors and timeout values
-├── verify_setup.py          ← Run before main.py to check everything works
+├── verify_setup.py          ← Run before main.py to check configuration
 ├── test_login.py            ← Standalone login smoke test
 ├── requirements.txt         ← Python dependencies
-├── classification_prompt.txt ← Gemini classification prompt template
 │
 ├── pages/                   ← Page Object Model (Playwright)
 │   ├── __init__.py
@@ -90,37 +68,11 @@ RPA/
 │   ├── browser_manager.py   ← Camoufox browser launch and teardown
 │   └── login_page.py        ← Login flow: username/password/CAPTCHA
 │
-├── config/                  ← Google service account credentials (gitignored)
-│   └── google_service_account.json
-│
 ├── hipaa_local/             ← Local-only PDF storage (auto-created, gitignored)
-├── screenshots/             ← Debug screenshots (auto-created)
 └── logs/                    ← Log files + Excel audit log (auto-created)
 ```
 
 > **`rishav_files/`** — Legacy reference files, not used by the agent.
-
----
-
-## 🔒 HIPAA Data Flow
-
-```
-YOUR MACHINE  (100% local — HIPAA safe)
-  ECW fax preview
-      │ PDF bytes
-      ▼
-  hipaa_local/   ← saved on your machine only
-      │ page images
-      ▼
-  Mistral via Ollama  ← runs locally, no internet
-      │ plain text (no images, no PHI)
-      ▼
-GOOGLE VERTEX AI  (covered under signed BAA)
-  Gemini 1.5 Pro → classification JSON
-      │
-      ▼
-YOUR MACHINE  ← result returned, fax routed in ECW
-```
 
 ---
 
@@ -129,55 +81,39 @@ YOUR MACHINE  ← result returned, fax routed in ECW
 ### 1 — Install Python 3.11+
 Download from https://python.org. Check **"Add Python to PATH"** during install.
 
-### 2 — Install Ollama
-Download from https://ollama.com/download, then:
-```bash
-ollama pull mistral-small3.1
-```
-This downloads ~7 GB — do it once on a good connection.
-
-### 3 — Install dependencies
+### 2 — Install dependencies
 ```bash
 cd C:\path\to\RPA
 pip install -r requirements.txt
 playwright install chromium
 ```
 
-### 4 — Set up Google Vertex AI
-1. [Google Cloud Console](https://console.cloud.google.com) → create/select project
-2. Enable **Vertex AI API**
-3. IAM → Service Accounts → Create → grant **"Vertex AI User"** role
-4. Download JSON key → save to `config/google_service_account.json`
-5. Sign a **BAA**: Console → IAM → Data Protection (required for HIPAA)
-
-### 5 — Fill in config.py
+### 3 — Fill in config.py
 ```python
-GOOGLE_CLOUD_PROJECT_ID = "your-gcp-project"
 ECW_URL      = "https://your-ecw-url.ecwcloud.com/..."
 ECW_USERNAME = "your_username"
 ECW_PASSWORD = "your_password"
 ```
 
-### 6 — Verify setup
+### 4 — Verify setup
 ```bash
 python verify_setup.py
 ```
 All checks should show ✅ before running.
 
-### 7 — Run the agent
+### 5 — Run the agent
 ```bash
 python main.py
 ```
-Watch the browser automate! Results saved to `logs/fax_classification_log.xlsx`.
+Watch the browser automate! PDFs are stored in `hipaa_local/raw_pdfs/`. Results saved to `logs/fax_download_log.xlsx`.
 
 ---
 
 ## 📊 Audit Log
 
-Open `logs/fax_classification_log.xlsx`:
-- 🟢 **GREEN** — High confidence (auto-moved to staff group)
-- 🟡 **YELLOW** — Medium confidence (auto-moved, worth spot-checking)
-- 🔴 **RED** — Low confidence (flagged for manual review)
+Open `logs/fax_download_log.xlsx`:
+- 🟢 **GREEN** — File downloaded successfully
+- 🔴 **RED** — Download failed or element timeout
 
 ---
 
@@ -190,9 +126,6 @@ Open `logs/fax_classification_log.xlsx`:
 | Dashboard overlay hangs | Increase `timeout` on `div#load` hidden wait (default: 60s) |
 | Jellybean menu not working | Inspect `a#jellybean-panelLink29/302/332` IDs in browser DevTools |
 | PDF preview empty | Update `FAX_PREVIEW` selector in `constants.py` |
-| Ollama OCR slow | Normal on first run — model loads into RAM (~30s) |
-| Vertex AI 403 error | Ensure service account has "Vertex AI User" role |
-| Low confidence results | Tune `classification_prompt.txt` |
 
 ---
 

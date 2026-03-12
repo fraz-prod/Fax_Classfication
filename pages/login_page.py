@@ -151,12 +151,6 @@ class LoginPage(BasePage):
 
         except Exception as e:
             log.error(f"ERROR in enter_password: {e}")
-            screenshot_path = self.get_screenshot_path("error_enter_password.jpg")
-            try:
-                self.page.screenshot(path=screenshot_path, full_page=True, type='jpeg', quality=30)
-                log.info(f"Screenshot saved to {screenshot_path}")
-            except Exception:
-                pass
             return False
 
     def _click_verification_overlay(self):
@@ -221,11 +215,6 @@ class LoginPage(BasePage):
             log.debug(f"Added click marker at ({abs_x}, {abs_y})")
 
             self.page.wait_for_timeout(500)
-
-            # Save debug screenshot so you can verify the marker lands on the checkbox
-            screenshot_path = self.get_screenshot_path("debug_before_verification.png")
-            self.page.screenshot(path=screenshot_path, full_page=True)
-            log.info(f"Debug screenshot saved: {screenshot_path}")
 
             self.page.mouse.click(abs_x, abs_y)
 

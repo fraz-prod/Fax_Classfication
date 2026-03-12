@@ -1,4 +1,4 @@
-# RPA Fax Classification Agent - Python Dependencies
+# ECW Fax Downloader - Python Dependencies
 # Install: pip install -r requirements.txt
 # Then:    playwright install chromium
 
@@ -13,24 +13,8 @@ playwright
 # Install separately: pip install camoufox
 camoufox
 
-# HTTP client (PDF download + Vertex AI API calls)
+# HTTP client (PDF download requests)
 httpx
 
 # Excel audit log
 openpyxl
-
-# PDF Pipeline (local, HIPAA safe)
-# PDF reading and splitting
-pypdf
-
-# PDF to image conversion for local OCR (fitz module)
-PyMuPDF
-
-# Google Vertex AI (Gemini classifier - BAA covered)
-google-auth
-google-auth-httplib2
-google-api-python-client
-
-# NOT needed:
-# anthropic  - classifier.py (Claude) is a LEGACY file, not used
-# boto3      - AWS Bedrock not used in this pipeline

@@ -1,6 +1,6 @@
 """
-Fax Audit Logger
-Saves all classification results to an Excel spreadsheet
+Fax Download Logger
+Saves all successfully downloaded fax file paths to an Excel spreadsheet
 """
 
 import os
@@ -12,15 +12,7 @@ from openpyxl.styles import Font, PatternFill, Alignment
 log = logging.getLogger(__name__)
 
 LOG_DIR = "logs"
-LOG_FILE = os.path.join(LOG_DIR, "fax_classification_log.xlsx")
-
-# Color coding by confidence
-COLORS = {
-    "HIGH":   "C6EFCE",  # Green
-    "MEDIUM": "FFEB9C",  # Yellow
-    "LOW":    "FFC7CE",  # Red
-    "UNKNOWN":"FFC7CE",  # Red
-}
+LOG_FILE = os.path.join(LOG_DIR, "fax_download_log.xlsx")
 
 
 class FaxLogger:
@@ -35,7 +27,7 @@ class FaxLogger:
         else:
             wb = Workbook()
             ws = wb.active
-            ws.title = "Fax Log"
+            ws.title = "Download Log"
             self._write_header(ws)
 
         for r in results:
@@ -44,13 +36,13 @@ class FaxLogger:
         # Auto-size columns
         for col in ws.columns:
             max_len = max((len(str(cell.value or "")) for cell in col), default=10)
-            ws.column_dimensions[col[0].column_letter].width = min(max_len + 4, 50)
+            ws.column_dimensions[col[0].column_letter].width = min(max_len + 4, 80)
 
         wb.save(LOG_FILE)
         log.info(f"Audit log saved to: {LOG_FILE}")
 
     def _write_header(self, ws):
-        headers = ["#", "Timestamp", "Category", "Confidence", "Action", "Reason"]
+        headers = ["#", "Timestamp", "Status", "File Path", "Reason"]
         for col, header in enumerate(headers, 1):
             cell = ws.cell(row=1, column=col, value=header)
             cell.font = Font(bold=True, color="FFFFFF")
@@ -59,15 +51,16 @@ class FaxLogger:
 
     def _write_row(self, ws, r: dict):
         row = ws.max_row + 1
-        confidence = r.get("confidence", "LOW")
-        color = COLORS.get(confidence, "FFFFFF")
+        status = r.get("status", "FAILED")
+        
+        # Green for success, Red for failure
+        color = "C6EFCE" if status == "SUCCESS" else "FFC7CE"
 
         values = [
             r.get("fax_index", ""),
             r.get("timestamp", ""),
-            r.get("category", ""),
-            confidence,
-            r.get("action", ""),
+            status,
+            r.get("filepath", ""),
             r.get("reason", "")
         ]
 

@@ -1,13 +1,13 @@
 """
-Fax Classification Agent - Main Orchestrator
-Automates ECW fax inbox classification using Gemini AI (Vertex AI, HIPAA-covered)
+ECW Fax Downloader - Main Orchestrator
+Automates ECW fax inbox navigation and downloads PDFs locally.
 """
 
 import asyncio
 import logging
 from datetime import datetime
 from ecw_bot import ECWBot
-from pipeline import FaxClassificationPipeline
+from pdf_handler import PDFHandler
 from logger import FaxLogger
 
 # Setup logging
@@ -24,11 +24,11 @@ log = logging.getLogger(__name__)
 
 async def main():
     log.info("=" * 60)
-    log.info("   FAX CLASSIFICATION AGENT STARTING")
+    log.info("   ECW FAX DOWNLOADER STARTING")
     log.info("=" * 60)
 
     bot = ECWBot()
-    pipeline = FaxClassificationPipeline()
+    pdf_handler = PDFHandler()
     fax_logger = FaxLogger()
 
     try:
@@ -54,6 +54,7 @@ async def main():
         # Step 5: Process each fax
         for i, fax in enumerate(fax_list):
             log.info(f"\n--- Processing fax {i+1} of {len(fax_list)} ---")
+            fax_id = f"fax_{i+1}_{datetime.now().strftime('%H%M%S')}"
 
             # Download PDF bytes from ECW preview
             log.info("Downloading PDF from ECW...")
@@ -64,40 +65,30 @@ async def main():
                 results.append({
                     'fax_index': i + 1,
                     'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    'fax_id': f"fax_{i+1}",
-                    'category': 'UNKNOWN',
-                    'confidence': 'LOW',
-                    'reason': 'PDF download failed — could not read ECW preview',
-                    'action': 'MANUAL REVIEW'
+                    'status': 'FAILED',
+                    'filepath': '',
+                    'reason': 'Could not read ECW preview iframe'
                 })
                 continue
 
-            # Run full pipeline: split → local OCR → Gemini classify
-            fax_id = f"fax_{i+1}_{datetime.now().strftime('%H%M%S')}"
-            result = await pipeline.process_fax(fax_id, pdf_bytes)
+            # Save PDF locally
+            log.info("Saving PDF locally...")
+            filepath = pdf_handler.save_pdf(pdf_bytes, fax_id)
 
-            log.info(f"  Category : {result['category']}")
-            log.info(f"  Confidence: {result['confidence']}")
-            log.info(f"  Reason   : {result['reason']}")
-
-            # Send fax to correct staff group via person icon + dialog
-            if result['confidence'] in ['HIGH', 'MEDIUM']:
-                success = await bot.send_fax_to_staff_group(result['category'])
-                result['action'] = 'SENT TO STAFF' if success else 'SEND FAILED'
-            else:
-                log.warning(f"  Low confidence — skipping auto-send. Manual review needed.")
-                result['action'] = 'MANUAL REVIEW'
-
+            log.info(f"✅ Success: Saved to {filepath}")
+            
             # Log result
             results.append({
                 'fax_index': i + 1,
                 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                **result
+                'status': 'SUCCESS',
+                'filepath': filepath,
+                'reason': ''
             })
 
         # Step 6: Save audit log to Excel
         fax_logger.save(results)
-        log.info(f"\nDone! Processed {len(results)} faxes. Log saved.")
+        log.info(f"\nDone! Downloaded {len([r for r in results if r['status'] == 'SUCCESS'])} faxes. Log saved.")
 
     except Exception as e:
         log.error(f"Agent crashed: {e}", exc_info=True)
